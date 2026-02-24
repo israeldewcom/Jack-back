@@ -1,0 +1,51 @@
+# Core
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+alembic
+redis
+kafka-python
+aiokafka
+
+# ML
+scikit-learn
+pandas
+numpy
+mlflow
+shap
+lime
+alibi-detect
+river
+
+# Security
+pyjwt
+passlib[bcrypt]
+python-multipart
+cryptography
+boto3
+duo-client
+geoip2
+
+# Observability
+prometheus-client
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-jaeger
+opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-sqlalchemy
+python-json-logger
+
+# Testing & Automation
+pytest
+locust
+chaostoolkit
+chaostoolkit-kubernetes
+bandit
+trivy
+
+# Other
+aiohttp
+requests
+pydantic
+python-dotenv

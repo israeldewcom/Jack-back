@@ -1,4 +1,4 @@
-# Build dependency
+# Build dependency required for some packages
 Cython
 
 # Core
@@ -19,7 +19,7 @@ mlflow
 shap
 lime
 alibi-detect
-river          # This replaces creme
+river          # This is the modern replacement for 'creme'
 
 # Security
 pyjwt

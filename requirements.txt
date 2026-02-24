@@ -1,4 +1,4 @@
-# Build dependency required for some packages
+# Build dependency for packages that need compilation
 Cython
 
 # Core
@@ -18,8 +18,8 @@ numpy
 mlflow
 shap
 lime
-alibi-detect
-river          # This is the modern replacement for 'creme'
+alibi-detect>=0.6.0      # Upgraded to avoid creme dependency
+river                    # Modern replacement for creme
 
 # Security
 pyjwt

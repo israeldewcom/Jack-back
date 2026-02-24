@@ -1,0 +1,41 @@
+from alibi_detect.cd import KSDrift
+import numpy as np
+import redis
+import pickle
+import logging
+
+logger = logging.getLogger(__name__)
+
+class DriftDetector:
+    def __init__(self, redis_client: redis.Redis, reference_data: np.ndarray, p_val: float = 0.05):
+        self.redis = redis_client
+        self.detector = KSDrift(reference_data, p_val=p_val)
+        self.p_val = p_val
+
+    def detect_feature_drift(self, current_data: np.ndarray, feature_names: List[str]) -> dict:
+        """Detect drift in feature distributions."""
+        pred = self.detector.predict(current_data)
+        drift_results = {}
+        for i, name in enumerate(feature_names):
+            drift_results[name] = {
+                "drift_detected": bool(pred['data']['is_drift'][i]),
+                "p_value": float(pred['data']['p_val'][i])
+            }
+        return drift_results
+
+    def detect_concept_drift(self, model_name: str, current_metrics: dict):
+        """Compare current model performance to baseline."""
+        baseline = self.redis.get(f"model:baseline:{model_name}")
+        if not baseline:
+            return {"drift_detected": False, "message": "No baseline"}
+        baseline = pickle.loads(baseline)
+        # simple threshold check
+        drift = {}
+        for metric, value in current_metrics.items():
+            if metric in baseline:
+                threshold = baseline[metric] * 0.2  # 20% degradation
+                if value < baseline[metric] - threshold:
+                    drift[metric] = True
+                else:
+                    drift[metric] = False
+        return {"drift_detected": any(drift.values()), "details": drift}

@@ -1,0 +1,56 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run tests
+        run: pytest tests/
+      - name: Security scan (Bandit)
+        run: bandit -r cloud/
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build and push Docker images
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+          docker build -t $DOCKER_USERNAME/citp-cloud:latest -f docker/cloud.Dockerfile .
+          docker push $DOCKER_USERNAME/citp-cloud:latest
+      - name: Scan image for vulnerabilities (Trivy)
+        run: trivy image $DOCKER_USERNAME/citp-cloud:latest
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v3
+      - name: Deploy to Kubernetes
+        env:
+          KUBECONFIG: ${{ secrets.KUBECONFIG }}
+        run: |
+          kubectl apply -f docker/kubernetes/
+          kubectl rollout status deployment/cloud-api
+      - name: Run smoke tests
+        run: |
+          curl -f http://cloud-api/health || exit 1

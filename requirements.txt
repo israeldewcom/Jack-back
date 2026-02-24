@@ -42,7 +42,6 @@ locust
 chaostoolkit
 chaostoolkit-kubernetes
 bandit
-trivy
 
 # Other
 aiohttp

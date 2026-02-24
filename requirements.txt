@@ -1,3 +1,6 @@
+# Build dependency
+Cython
+
 # Core
 fastapi
 uvicorn
@@ -16,7 +19,7 @@ mlflow
 shap
 lime
 alibi-detect
-river
+river          # This replaces creme
 
 # Security
 pyjwt

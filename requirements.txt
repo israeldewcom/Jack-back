@@ -20,7 +20,7 @@ shap
 lime
 alibi-detect>=0.6.0      # Upgraded to avoid creme dependency
 river                    # Modern replacement for creme
-
+matplotlib>=3.5.0
 # Security
 pyjwt
 passlib[bcrypt]

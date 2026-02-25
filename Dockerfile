@@ -22,17 +22,17 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 # Stage 2: Final runtime image
 FROM python:3.11-slim
 
-# Create a non-root user to run the app (security best practice)
+# Create a non-root user to run the app
 RUN addgroup --system --gid 1001 appgroup && \
     adduser --system --uid 1001 --gid 1001 appuser
 
 WORKDIR /app
 
-# Copy only the installed packages from builder (avoids having build tools in final image)
-COPY --from=builder /root/.local /home/appuser/.local
-COPY --from=builder /app/requirements.txt .
+# Copy installed packages from builder with correct ownership
+COPY --from=builder --chown=appuser:appgroup /root/.local /home/appuser/.local
 
-# Make sure scripts in .local are usable
+# Set environment variables so Python finds the user-installed packages
+ENV PYTHONUSERBASE=/home/appuser/.local
 ENV PATH=/home/appuser/.local/bin:$PATH
 
 # Copy application code
@@ -44,7 +44,7 @@ USER appuser
 # Expose the port the app runs on (Render will set PORT env variable)
 EXPOSE $PORT
 
-# Health check so Render knows when the app is ready
+# Health check (ensure your FastAPI app has a /health endpoint)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD python -c "import requests; requests.get('http://localhost:$PORT/health')" || exit 1
 

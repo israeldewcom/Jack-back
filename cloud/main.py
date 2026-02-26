@@ -1,4 +1,8 @@
-from fastapi import FastAPI, Depends
+"""
+Main FastAPI application for CITP Cloud API.
+Integrates all routers and background tasks.
+"""
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from .api import ingest as v1_ingest
@@ -11,32 +15,50 @@ from .streaming.consumer import TelemetryConsumer
 from .billing.middleware import BillingMiddleware
 import asyncio
 
-app = FastAPI(title="CITP Cloud API", version="2.0.0")
+app = FastAPI(
+    title="CITP Cloud API",
+    description="Continuous Identity Trust Platform",
+    version="2.0.0",
+    docs_url="/docs" if os.getenv("ENABLE_DOCS", "true").lower() == "true" else None,
+    redoc_url=None,
+)
 
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Middleware
-app.add_middleware(BillingMiddleware)
+# Billing middleware (adds usage tracking)
+if os.getenv("ENABLE_BILLING", "false").lower() == "true":
+    app.add_middleware(BillingMiddleware)
 
-# Routers
-app.include_router(v1_ingest.router, prefix="/v1")
-app.include_router(v2_ingest.router)
-app.include_router(auth_router.router)
-app.include_router(health_router)
-app.include_router(metrics_router)
+# Include routers – v1 untouched, v2 added
+app.include_router(v1_ingest.router, prefix="/v1", tags=["Telemetry v1"])
+if os.getenv("ENABLE_V2_API", "true").lower() == "true":
+    app.include_router(v2_ingest.router, prefix="/v2", tags=["Telemetry v2"])
+app.include_router(auth_router.router, prefix="/auth", tags=["Authentication"])
+app.include_router(health_router, prefix="/health", tags=["Health"])
+app.include_router(metrics_router, prefix="/metrics", tags=["Metrics"])
 
 @app.on_event("startup")
-async def startup():
+async def startup_event():
+    """Initialize services on startup."""
     setup_logging()
-    # Start Kafka consumer
-    consumer = TelemetryConsumer(max_concurrent=20)
-    asyncio.create_task(consumer.start())
+    # Start Kafka consumer if enabled
+    if os.getenv("ENABLE_KAFKA_CONSUMER", "true").lower() == "true":
+        consumer = TelemetryConsumer(max_concurrent=int(os.getenv("KAFKA_MAX_CONCURRENT", "10")))
+        asyncio.create_task(consumer.start())
+    # Additional startup tasks (e.g., warm up caches) can be added here
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown."""
+    # Gracefully stop background tasks
+    pass
 
 @app.get("/")
 async def root():
@@ -44,5 +66,7 @@ async def root():
         "service": "CITP Cloud API",
         "version": "2.0.0",
         "status": "operational",
-        "documentation": "/docs"
+        "documentation": "/docs",
+        "v1_endpoints": "/v1/telemetry",
+        "v2_endpoints": "/v2/telemetry" if os.getenv("ENABLE_V2_API") else "disabled",
     }

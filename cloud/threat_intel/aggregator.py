@@ -1,10 +1,14 @@
+"""
+Threat intelligence aggregator with multiple sources, caching, and fallback.
+"""
 import aiohttp
 import asyncio
 import redis.asyncio as aioredis
 import json
 import logging
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, List, Dict, Any
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
@@ -13,29 +17,44 @@ class ThreatIntelAggregator:
         self.redis = redis_client
         self.cache_ttl = cache_ttl
         self.apis = {
-            "abuseipdb": "https://api.abuseipdb.com/api/v2/check",
-            "virustotal": "https://www.virustotal.com/api/v3/ip_addresses/",
+            "abuseipdb": {
+                "url": "https://api.abuseipdb.com/api/v2/check",
+                "api_key": os.getenv("ABUSEIPDB_API_KEY"),
+                "enabled": bool(os.getenv("ABUSEIPDB_API_KEY"))
+            },
+            "virustotal": {
+                "url": "https://www.virustotal.com/api/v3/ip_addresses/",
+                "api_key": os.getenv("VIRUSTOTAL_API_KEY"),
+                "enabled": bool(os.getenv("VIRUSTOTAL_API_KEY"))
+            },
+            # Add more sources as needed
         }
-        self.api_keys = {
-            "abuseipdb": os.getenv("ABUSEIPDB_API_KEY"),
-            "virustotal": os.getenv("VIRUSTOTAL_API_KEY"),
-        }
-        self.fallback_score = 50  # neutral
+        self.fallback_score = int(os.getenv("THREAT_INTEL_FALLBACK_SCORE", "50"))
+        self.timeout = aiohttp.ClientTimeout(total=5)
 
+    @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=2, max=5))
     async def check_ip(self, ip: str) -> int:
+        """
+        Return reputation score (0-100, higher is safer) for an IP.
+        Uses Redis cache. On failure, returns fallback.
+        """
         cache_key = f"threat:intel:{ip}"
         cached = await self.redis.get(cache_key)
         if cached:
             return int(cached)
 
         tasks = []
-        async with aiohttp.ClientSession() as session:
-            if self.api_keys["abuseipdb"]:
-                tasks.append(self._query_abuseipdb(session, ip))
-            if self.api_keys["virustotal"]:
-                tasks.append(self._query_virustotal(session, ip))
+        async with aiohttp.ClientSession(timeout=self.timeout) as session:
+            for source, config in self.apis.items():
+                if config["enabled"]:
+                    if source == "abuseipdb":
+                        tasks.append(self._query_abuseipdb(session, ip, config))
+                    elif source == "virustotal":
+                        tasks.append(self._query_virustotal(session, ip, config))
+                    # Add other sources similarly
 
             if not tasks:
+                logger.warning("No threat intel sources enabled, using fallback")
                 return self.fallback_score
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -49,35 +68,39 @@ class ThreatIntelAggregator:
         await self.redis.setex(cache_key, self.cache_ttl, str(score))
         return score
 
-    async def _query_abuseipdb(self, session, ip) -> Optional[int]:
+    async def _query_abuseipdb(self, session, ip, config):
         try:
-            headers = {"Key": self.api_keys["abuseipdb"], "Accept": "application/json"}
+            headers = {"Key": config["api_key"], "Accept": "application/json"}
             params = {"ipAddress": ip, "maxAgeInDays": 90}
-            async with session.get(self.apis["abuseipdb"], headers=headers, params=params, timeout=5) as resp:
+            async with session.get(config["url"], headers=headers, params=params) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     abuse_score = data["data"]["abuseConfidenceScore"]
+                    # Convert to reputation: 100 - abuse_score
                     return 100 - abuse_score
                 else:
-                    logger.error(f"AbuseIPDB error {resp.status}")
+                    logger.error(f"AbuseIPDB error {resp.status} for {ip}")
                     return None
         except Exception as e:
-            logger.exception(f"AbuseIPDB exception: {e}")
+            logger.exception(f"AbuseIPDB exception for {ip}: {e}")
             return None
 
-    async def _query_virustotal(self, session, ip) -> Optional[int]:
+    async def _query_virustotal(self, session, ip, config):
         try:
-            headers = {"x-apikey": self.api_keys["virustotal"]}
-            async with session.get(self.apis["virustotal"] + ip, headers=headers, timeout=5) as resp:
+            headers = {"x-apikey": config["api_key"]}
+            async with session.get(config["url"] + ip, headers=headers) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     stats = data["data"]["attributes"]["last_analysis_stats"]
                     total = sum(stats.values())
                     malicious = stats.get("malicious", 0)
-                    return int((total - malicious) / total * 100) if total > 0 else 50
+                    if total > 0:
+                        return int((total - malicious) / total * 100)
+                    else:
+                        return 50
                 else:
-                    logger.error(f"VirusTotal error {resp.status}")
+                    logger.error(f"VirusTotal error {resp.status} for {ip}")
                     return None
         except Exception as e:
-            logger.exception(f"VirusTotal exception: {e}")
+            logger.exception(f"VirusTotal exception for {ip}: {e}")
             return None

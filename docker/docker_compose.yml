@@ -11,17 +11,29 @@ services:
       - pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U citp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   zookeeper:
     image: confluentinc/cp-zookeeper:latest
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
 
   kafka:
     image: confluentinc/cp-kafka:latest
@@ -34,21 +46,35 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     ports:
       - "9092:9092"
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.3.1
-    command: mlflow server --host 0.0.0.0 --backend-store-uri postgresql://citp:citp@postgres/citp --default-artifact-root s3://mlflow/  # or local
+    command: mlflow server --host 0.0.0.0 --backend-store-uri postgresql://citp:citp@postgres/citp --default-artifact-root /mlflow/artifacts
     ports:
       - "5000:5000"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    volumes:
+      - mlflow_artifacts:/mlflow/artifacts
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
 
   prometheus:
     image: prom/prometheus
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
     ports:
       - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
 
   grafana:
     image: grafana/grafana
@@ -56,6 +82,8 @@ services:
       - "3000:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
 
   cloud-api:
     build:
@@ -65,17 +93,39 @@ services:
       DATABASE_URL: postgresql://citp:citp@postgres/citp
       REDIS_URL: redis://redis:6379/0
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      JWT_SECRET_KEY: your-strong-secret
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      AUDIT_SECRET: ${AUDIT_SECRET}
       ABUSEIPDB_API_KEY: ${ABUSEIPDB_API_KEY}
       VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY}
-      AUDIT_SECRET: your-audit-secret
+      DUO_IKEY: ${DUO_IKEY}
+      DUO_SKEY: ${DUO_SKEY}
+      DUO_API_HOST: ${DUO_API_HOST}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      ENABLE_V2_API: "true"
+      ENABLE_BILLING: "false"
+      APP_VERSION: 2.0.0
     ports:
       - "8000:8000"
     depends_on:
-      - postgres
-      - redis
-      - kafka
-      - mlflow
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   pgdata:
+  mlflow_artifacts:
+  prometheus_data:
+  grafana_data:

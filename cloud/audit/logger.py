@@ -1,3 +1,6 @@
+"""
+Tamper‑evident audit logger with HMAC signatures.
+"""
 import hmac
 import hashlib
 import json
@@ -47,6 +50,9 @@ class AuditLogger:
             db.close()
 
     def verify_log(self, log_entry: dict) -> bool:
+        """
+        Verify the signature of an existing log entry (from DB or elsewhere).
+        """
         original_sig = log_entry.pop("signature", None)
         if not original_sig:
             return False

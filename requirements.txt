@@ -1,53 +1,27 @@
-# Build dependency for packages that need compilation
-Cython
-
-# Core
 fastapi
 uvicorn
 sqlalchemy
-psycopg2-binary
 alembic
+psycopg2-binary
 redis
-kafka-python
+redis[aio]
 aiokafka
-
-# ML
-scikit-learn
-pandas
-numpy
+kafka-python
 mlflow
 shap
-lime
-alibi-detect>=0.6.0      # Upgraded to avoid creme dependency
-river                    # Modern replacement for creme
-matplotlib>=3.5.0
-# Security
-pyjwt
-passlib[bcrypt]
-python-multipart
-cryptography
-boto3
-duo-client
+river
 geoip2
-
-# Observability
-prometheus-client
-opentelemetry-api
-opentelemetry-sdk
-opentelemetry-exporter-jaeger
-opentelemetry-instrumentation-fastapi
-opentelemetry-instrumentation-sqlalchemy
-python-json-logger
-
-# Testing & Automation
-pytest
-locust
-chaostoolkit
-chaostoolkit-kubernetes
-bandit
-
-# Other
 aiohttp
-requests
+duo-client
+prometheus-client
+python-jose[cryptography]
+passlib[bcrypt]
 pydantic
 python-dotenv
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-instrumentation-fastapi
+opentelemetry-exporter-prometheus
+pytest
+pytest-cov
+locust

@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: citp
+      POSTGRES_PASSWORD: citp
+      POSTGRES_DB: citp
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.3.1
+    command: mlflow server --host 0.0.0.0 --backend-store-uri postgresql://citp:citp@postgres/citp --default-artifact-root s3://mlflow/  # or local
+    ports:
+      - "5000:5000"
+    depends_on:
+      - postgres
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+
+  cloud-api:
+    build:
+      context: ..
+      dockerfile: docker/cloud.Dockerfile
+    environment:
+      DATABASE_URL: postgresql://citp:citp@postgres/citp
+      REDIS_URL: redis://redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      JWT_SECRET_KEY: your-strong-secret
+      ABUSEIPDB_API_KEY: ${ABUSEIPDB_API_KEY}
+      VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY}
+      AUDIT_SECRET: your-audit-secret
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+      - mlflow
+
+volumes:
+  pgdata:

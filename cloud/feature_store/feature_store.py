@@ -1,36 +1,43 @@
+"""
+Feature store with Redis caching and precomputed aggregates.
+"""
 import pandas as pd
 from sqlalchemy import create_engine, text
 from datetime import datetime, timedelta
 import redis.asyncio as aioredis
 import json
 import logging
-from typing import Optional
-from ..observability.logging import logger
+from typing import Dict, Any
+
+logger = logging.getLogger(__name__)
 
 class FeatureStore:
     def __init__(self, db_uri: str, redis_url: str = "redis://redis:6379/0"):
-        self.db_engine = create_engine(db_uri)
+        self.db_engine = create_engine(db_uri, pool_size=10, max_overflow=20)
         self.redis = aioredis.from_url(redis_url, decode_responses=True)
         logger.info("FeatureStore initialized")
 
-    async def get_user_features(self, user_id: str, timestamp: datetime) -> dict:
+    async def get_user_features(self, user_id: str, timestamp: datetime) -> Dict[str, Any]:
+        """
+        Retrieve or compute features for a user at a given timestamp.
+        Uses Redis cache for 1 hour.
+        """
         cache_key = f"features:user:{user_id}:{timestamp.isoformat()}"
         cached = await self.redis.get(cache_key)
         if cached:
             logger.debug(f"Cache hit for {cache_key}")
             return json.loads(cached)
 
-        # Compute features from pre‑aggregated tables (or raw if needed)
-        # Using precomputed daily aggregates for performance
+        # Compute features from pre‑aggregated table (telemetry_hourly_agg)
         start_time = timestamp - timedelta(hours=24)
         query = text("""
             SELECT
-                AVG(keystroke_speed) as avg_keystroke_speed,
-                AVG(mouse_speed) as avg_mouse_speed,
-                COUNT(DISTINCT ip_address) as unique_ips,
-                MAX(risk_score) as max_risk_score_24h,
-                COUNT(*) as event_count
-            FROM telemetry_hourly_agg   -- precomputed table
+                AVG(avg_keystroke_speed) as avg_keystroke_speed,
+                AVG(avg_mouse_speed) as avg_mouse_speed,
+                SUM(unique_ips) as unique_ips,
+                MAX(max_risk_score) as max_risk_score_24h,
+                SUM(event_count) as event_count
+            FROM telemetry_hourly_agg
             WHERE user_id = :user_id
               AND hour >= :start_time
         """)
@@ -47,12 +54,36 @@ class FeatureStore:
             "day_of_week": timestamp.weekday(),
         }
 
-        # Cache for 1 hour (3600 seconds)
+        # Cache for 1 hour
         await self.redis.setex(cache_key, 3600, json.dumps(features))
         logger.debug(f"Computed features for user {user_id}")
         return features
 
     async def precompute_aggregates(self, start: datetime, end: datetime):
-        """Batch job to populate telemetry_hourly_agg."""
-        # Implementation for scheduled backfill
-        pass
+        """
+        Batch job to populate telemetry_hourly_agg from raw telemetry.
+        This would be called by a scheduler (e.g., cron, Airflow).
+        """
+        query = text("""
+            INSERT INTO telemetry_hourly_agg (user_id, hour, avg_keystroke_speed, avg_mouse_speed, unique_ips, max_risk_score, event_count)
+            SELECT
+                user_id,
+                date_trunc('hour', timestamp) as hour,
+                AVG(keystroke_speed) as avg_keystroke_speed,
+                AVG(mouse_speed) as avg_mouse_speed,
+                COUNT(DISTINCT ip) as unique_ips,
+                MAX(risk_score) as max_risk_score,
+                COUNT(*) as event_count
+            FROM telemetry
+            WHERE timestamp BETWEEN :start AND :end
+            GROUP BY user_id, date_trunc('hour', timestamp)
+            ON CONFLICT (user_id, hour) DO UPDATE SET
+                avg_keystroke_speed = EXCLUDED.avg_keystroke_speed,
+                avg_mouse_speed = EXCLUDED.avg_mouse_speed,
+                unique_ips = EXCLUDED.unique_ips,
+                max_risk_score = EXCLUDED.max_risk_score,
+                event_count = EXCLUDED.event_count
+        """)
+        with self.db_engine.begin() as conn:
+            conn.execute(query, {"start": start, "end": end})
+        logger.info(f"Precomputed aggregates from {start} to {end}")

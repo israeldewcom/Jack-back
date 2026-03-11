@@ -104,3 +104,124 @@ class TelemetryHourlyAgg(Base):
     unique_ips = Column(Integer)
     max_risk_score = Column(Float)
     event_count = Column(Integer)
+
+# ===== NEW COMMERCIAL MODELS =====
+# Add these after your existing models (AuditLog, FeatureCache, etc.)
+
+class Tenant(Base):
+    __tablename__ = "tenants"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    subdomain = Column(String, unique=True, nullable=False, index=True)  # e.g., "acme"
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
+
+    # Stripe fields
+    stripe_customer_id = Column(String, unique=True, nullable=True)
+    stripe_subscription_id = Column(String, nullable=True)
+    subscription_status = Column(String, default="inactive")  # active, past_due, canceled
+    plan = Column(String, default="free")  # free, pro, enterprise
+
+    # Relationships
+    users = relationship("User", back_populates="tenant")
+    api_keys = relationship("APIKey", back_populates="tenant")
+    usage_records = relationship("UsageRecord", back_populates="tenant")
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, index=True)
+    email = Column(String, unique=True, nullable=False, index=True)
+    hashed_password = Column(String, nullable=False)
+    full_name = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    is_verified = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_login_at = Column(DateTime, nullable=True)
+
+    # Relationships
+    tenant = relationship("Tenant", back_populates="users")
+    roles = relationship("UserRole", back_populates="user")
+    api_keys = relationship("APIKey", back_populates="user")
+
+
+class Role(Base):
+    __tablename__ = "roles"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, unique=True, nullable=False)  # admin, analyst, auditor
+    description = Column(String, nullable=True)
+
+
+class UserRole(Base):
+    __tablename__ = "user_roles"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    role_id = Column(Integer, ForeignKey("roles.id"), nullable=False)
+
+    user = relationship("User", back_populates="roles")
+    role = relationship("Role")
+
+
+class Invitation(Base):
+    __tablename__ = "invitations"
+
+    id = Column(Integer, primary_key=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    email = Column(String, nullable=False)
+    role_id = Column(Integer, ForeignKey("roles.id"), nullable=False)
+    token = Column(String, unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    accepted_at = Column(DateTime, nullable=True)
+
+    tenant = relationship("Tenant")
+    role = relationship("Role")
+
+
+class APIKey(Base):
+    __tablename__ = "api_keys"
+
+    id = Column(Integer, primary_key=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name = Column(String, nullable=False)
+    key_hash = Column(String, unique=True, nullable=False)  # store hashed key, not plaintext
+    last_chars = Column(String(4), nullable=False)  # last 4 chars for display
+    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, default=True)
+
+    tenant = relationship("Tenant", back_populates="api_keys")
+    user = relationship("User", back_populates="api_keys")
+
+
+class UsageRecord(Base):
+    __tablename__ = "usage_records"
+
+    id = Column(Integer, primary_key=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    metric = Column(String, nullable=False)  # e.g., "sessions", "risk_inferences", "mfa_challenges"
+    quantity = Column(Integer, nullable=False)
+    recorded_at = Column(DateTime, default=datetime.utcnow)
+
+    tenant = relationship("Tenant", back_populates="usage_records")
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    token = Column(String, unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+
+    user = relationship("User")
